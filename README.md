@@ -398,10 +398,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/your-username/ghostcomplete)
+- [GitHub Repository](https://github.com/AwaisMehnga/ghostcomplete)
 - [NPM Package](https://www.npmjs.com/package/ghostcomplete)
-- [Documentation](https://your-username.github.io/ghostcomplete)
-- [Issues & Support](https://github.com/your-username/ghostcomplete/issues)
+- [Documentation](https://AwaisMehnga.github.io/ghostcomplete)
+- [Issues & Support](https://github.com/AwaisMehnga/ghostcomplete/issues)
 
 ---
 

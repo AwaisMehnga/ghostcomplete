@@ -52,12 +52,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/ghostcomplete.git"
+    "url": "https://github.com/AwaisMehnga/ghostcomplete.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/ghostcomplete/issues"
+    "url": "https://github.com/AwaisMehnga/ghostcomplete/issues"
   },
-  "homepage": "https://github.com/yourusername/ghostcomplete#readme",
+  "homepage": "https://github.com/AwaisMehnga/ghostcomplete#readme",
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-typescript": "^11.1.5",

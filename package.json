@@ -1,7 +1,7 @@
 {
   "name": "ghostcomplete",
-  "version": "2.0.0",
-  "description": "A lightweight, framework-agnostic autocomplete library with AI-powered predictions and trie-based word completion",
+  "version": "2.1.0",
+  "description": "A lightweight, framework-agnostic autocomplete library with intelligent word learning and trie-based completion",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
@@ -13,24 +13,20 @@
       "import": "./dist/index.esm.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    },
-    "./auto": "./dist/auto-init.js"
+    }
   },
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "!dist/**/*.map",
-    "auto-init.js"
+    "!dist/**/*.map"
   ],
   "scripts": {
-    "build": "npm run clean && npm run build:ts && npm run build:bundle && npm run build:auto-init",
+    "build": "npm run clean && npm run build:ts && npm run build:bundle",
     "build:ts": "tsc",
     "build:bundle": "rollup -c",
-    "build:auto-init": "node scripts/create-auto-init.cjs",
     "clean": "rimraf dist",
     "prepublishOnly": "npm run build",
-    "dev": "tsc --watch",
-    "postinstall": "node -e \"try { require('./auto-init.js'); } catch(e) { /* Ignore errors */ }\""
+    "dev": "tsc --watch"
   },
   "keywords": [
     "autocomplete",
@@ -48,7 +44,7 @@
     "laravel",
     "prediction"
   ],
-  "author": "Your Name",
+  "author": "Awais Mehnga",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -57,7 +53,7 @@
   "bugs": {
     "url": "https://github.com/AwaisMehnga/ghostcomplete/issues"
   },
-  "homepage": "https://github.com/AwaisMehnga/ghostcomplete#readme",
+  "homepage": "https://awaismehnga.github.io/ghostcomplete/",
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-typescript": "^11.1.5",

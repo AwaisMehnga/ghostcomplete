@@ -50,6 +50,7 @@
                 <li><a href="#demo" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">Live Demo</a></li>
                 <li><a href="#features" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">Features</a></li>
                 <li><a href="#installation" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">Installation</a></li>
+                <li><a href="#when-init" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">When Init?</a></li>
                 <li><a href="#examples" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">Examples</a></li>
                 <li><a href="#api" class="text-gray-700 dark:text-gray-300 hover:text-primary hover:bg-primary hover:text-white px-4 py-2 rounded-lg transition-all duration-300 font-medium">API</a></li>
             </ul>
@@ -94,6 +95,8 @@ function SearchInput() {
                             <button class="bg-primary text-white px-3 py-1 rounded text-sm hover:bg-secondary transition-colors" onclick="copyCode(this)">Copy</button>
                         </div>
                         <pre class="p-5 overflow-x-auto"><code class="language-jsx">// ✅ Works perfectly with controlled components
+import 'ghostcomplete'; // Auto-initializes and exposes GhostComplete globally
+
 function SearchInput() {
   const [value, setValue] = useState('');
   const inputRef = useGhostComplete('search');
@@ -118,7 +121,7 @@ function SearchInput() {
     <section id="demo" class="py-16 bg-gray-50 dark:bg-gray-900">
         <div class="max-w-6xl mx-auto px-5">
             <h2 class="text-4xl font-bold text-center mb-5 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Live Demo</h2>
-            <p class="text-xl text-gray-600 dark:text-gray-400 text-center mb-12 max-w-3xl mx-auto">Try typing in the inputs below. The library learns words from your input and provides relevant suggestions.</p>
+            <p class="text-xl text-gray-600 dark:text-gray-400 text-center mb-12 max-w-3xl mx-auto">Try typing in the inputs below. The library shows suggestions from the first character and learns words (3+ chars) for future use.</p>
             
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-8 mb-8 shadow-lg">
                 <form class="space-y-6 max-w-2xl mx-auto">
@@ -130,7 +133,7 @@ function SearchInput() {
                             data-autocomplete="search"
                             placeholder="Start typing to see suggestions..."
                         >
-                        <small class="text-gray-500 dark:text-gray-400 text-sm">Try typing common words like "hello", "world", "javascript", etc.</small>
+                        <small class="text-gray-500 dark:text-gray-400 text-sm">Try typing any character like "j", "h", "w" - suggestions appear instantly!</small>
                     </div>
 
                     <div class="space-y-2">
@@ -147,7 +150,7 @@ function SearchInput() {
 
             <div class="text-center">
                 <p class="text-gray-600 dark:text-gray-400 mb-5">
-                    <strong>How it works:</strong> As you type, GhostComplete learns words and builds a vocabulary for each input group.
+                    <strong>How it works:</strong> Suggestions appear from the first character you type. Words with 3+ characters are saved to build vocabulary for each input group.
                 </p>
                 <button onclick="clearAllData()" class="bg-secondary hover:bg-primary text-white px-6 py-3 rounded-lg transition-all duration-300 hover:-translate-y-1 font-medium">
                     Clear All Learned Data
@@ -166,7 +169,7 @@ function SearchInput() {
                 <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border border-gray-200 dark:border-gray-700 text-center">
                     <div class="text-4xl mb-4">🧠</div>
                     <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-white">Word Learning</h3>
-                    <p class="text-gray-600 dark:text-gray-300">Learns from user input to build vocabulary and suggest increasingly relevant word completions.</p>
+                    <p class="text-gray-600 dark:text-gray-300">Shows suggestions from the first character typed, learns words (3+ chars) to build smart vocabulary and provide increasingly relevant completions.</p>
                 </div>
 
                 <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border border-gray-200 dark:border-gray-700 text-center">
@@ -238,20 +241,114 @@ function SearchInput() {
                         <span class="text-sm text-gray-300">HTML + JavaScript</span>
                         <button class="text-blue-400 hover:text-blue-300 text-sm" onclick="copyCode(this)">Copy</button>
                     </div>
-                    <pre class="p-4 text-green-400 text-sm overflow-x-auto"><code class="language-html">&lt;!-- Add data-autocomplete attribute to any input --&gt;
+                    <pre class="p-4 text-green-400 text-sm overflow-x-auto"><code class="language-html">&lt;!-- ✅ Automatic - Just add data-autocomplete attribute --&gt;
 &lt;input type="text" data-autocomplete="search" placeholder="Start typing..."&gt;
 &lt;textarea data-autocomplete="comments" placeholder="Write comment..."&gt;&lt;/textarea&gt;
 
 &lt;script&gt;
-// Initialize all autocomplete inputs
-GhostComplete.initAll();
+// Import the library (automatically detects and initializes inputs)
+import 'ghostcomplete';
 
-// Or configure specific groups
+// That's it! Elements with data-autocomplete work automatically
+
+// ⚠️ Manual initialization only needed for:
+// - Dynamic elements created after page load
+// - React components (useEffect hooks)  
+// - Elements without data-autocomplete attribute
+
+GhostComplete.init('#my-input', 'search');  // For specific elements
+GhostComplete.initAll('default');           // For all elements at once
+
+// Configure groups as needed
 GhostComplete.setGroupConfig('search', {
   MAX_SUGGESTIONS: 8,
   DEBOUNCE_DELAY: 100
 });
 &lt;/script&gt;</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- When to Use Init Section -->
+    <section id="when-init" class="py-16 bg-gray-50 dark:bg-gray-900">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-center mb-12 text-gray-900 dark:text-white">When Do I Need init()?</h2>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                    <h3 class="text-xl font-semibold mb-4 text-green-600 dark:text-green-400">✅ No init() Required</h3>
+                    <p class="text-gray-600 dark:text-gray-300 mb-4">GhostComplete works automatically when:</p>
+                    <ul class="space-y-2 text-gray-600 dark:text-gray-300 mb-4">
+                        <li class="flex items-start">
+                            <span class="text-green-500 mr-2">•</span>
+                            Elements have <code class="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-sm">data-autocomplete</code> attribute
+                        </li>
+                        <li class="flex items-start">
+                            <span class="text-green-500 mr-2">•</span>
+                            Elements exist when page loads
+                        </li>
+                        <li class="flex items-start">
+                            <span class="text-green-500 mr-2">•</span>
+                            Using static HTML
+                        </li>
+                    </ul>
+                    <div class="bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden">
+                        <div class="flex justify-between items-center px-4 py-2 bg-gray-100 dark:bg-gray-800">
+                            <span class="text-sm text-gray-600 dark:text-gray-400">Automatic Usage</span>
+                            <button class="text-green-500 hover:text-green-400 text-sm" onclick="copyCode(this)">Copy</button>
+                        </div>
+                        <pre class="p-4 text-sm overflow-x-auto"><code class="language-html">&lt;!-- Just works automatically! --&gt;
+&lt;input data-autocomplete="search" placeholder="Search..."&gt;
+&lt;textarea data-autocomplete="comments"&gt;&lt;/textarea&gt;</code></pre>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+                    <h3 class="text-xl font-semibold mb-4 text-orange-600 dark:text-orange-400">⚠️ Manual init() Required</h3>
+                    <p class="text-gray-600 dark:text-gray-300 mb-4">You need to call init() when:</p>
+                    <ul class="space-y-2 text-gray-600 dark:text-gray-300 mb-4">
+                        <li class="flex items-start">
+                            <span class="text-orange-500 mr-2">•</span>
+                            Creating elements dynamically with JavaScript
+                        </li>
+                        <li class="flex items-start">
+                            <span class="text-orange-500 mr-2">•</span>
+                            Working with React/Vue components
+                        </li>
+                        <li class="flex items-start">
+                            <span class="text-orange-500 mr-2">•</span>
+                            Elements don't have <code class="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-sm">data-autocomplete</code>
+                        </li>
+                    </ul>
+                    <div class="bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden">
+                        <div class="flex justify-between items-center px-4 py-2 bg-gray-100 dark:bg-gray-800">
+                            <span class="text-sm text-gray-600 dark:text-gray-400">Manual Initialization</span>
+                            <button class="text-orange-500 hover:text-orange-400 text-sm" onclick="copyCode(this)">Copy</button>
+                        </div>
+                        <pre class="p-4 text-sm overflow-x-auto"><code class="language-javascript">// Dynamic elements
+const input = document.createElement('input');
+GhostComplete.init(input, 'search');
+
+// React components
+useEffect(() => {
+  GhostComplete.init(inputRef.current, 'search');
+}, []);</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-6">
+                <div class="flex items-start">
+                    <div class="text-blue-500 text-2xl mr-4">💡</div>
+                    <div>
+                        <h4 class="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">Pro Tip</h4>
+                        <p class="text-blue-800 dark:text-blue-200">
+                            Start with the automatic <code class="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded text-sm">data-autocomplete</code> approach. 
+                            Only use manual <code class="bg-blue-100 dark:bg-blue-800 px-2 py-1 rounded text-sm">init()</code> when you need it 
+                            for dynamic content or framework components.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -271,6 +368,8 @@ GhostComplete.setGroupConfig('search', {
                             <button class="text-blue-400 hover:text-blue-300 text-sm" onclick="copyCode(this)">Copy</button>
                         </div>
                         <pre class="p-4 text-sm overflow-x-auto"><code class="language-jsx">import { useEffect, useRef } from 'react';
+// Import GhostComplete (auto-initializes)
+import 'ghostcomplete';
 
 function useGhostComplete(group = 'default', config = {}) {
   const ref = useRef(null);
@@ -282,7 +381,7 @@ function useGhostComplete(group = 'default', config = {}) {
         GhostComplete.setGroupConfig(group, config);
       }
       
-      // Initialize autocomplete
+      // Manual init required for React components
       GhostComplete.init(ref.current, group);
     }
   }, [group]);
@@ -304,7 +403,10 @@ function SearchInput() {
       placeholder="Search..."
     /&gt;
   );
-}</code></pre>
+}
+
+// Note: For static HTML, no init() needed:
+// &lt;input data-autocomplete="search" placeholder="Search..." /&gt;</code></pre>
                     </div>
                 </div>
 
@@ -463,7 +565,7 @@ function SearchInput() {
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div class="bg-gray-50 dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700">
-                    <h3 class="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Configuration Options</h3>
+                    <h3 class="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Performance Configuration</h3>
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead>
@@ -477,48 +579,100 @@ function SearchInput() {
                                 <tr class="border-b border-gray-200 dark:border-gray-700">
                                     <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">MAX_WORDS</code></td>
                                     <td class="py-3 pr-4">300</td>
-                                    <td class="py-3">Maximum words to store</td>
+                                    <td class="py-3">Maximum words to store per group</td>
                                 </tr>
+
                                 <tr class="border-b border-gray-200 dark:border-gray-700">
                                     <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">MAX_SUGGESTIONS</code></td>
                                     <td class="py-3 pr-4">5</td>
-                                    <td class="py-3">Number of suggestions to show</td>
+                                    <td class="py-3">Maximum suggestions to show</td>
                                 </tr>
-                                <tr>
-                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">DEBOUNCE_DELAY</code></td>
-                                    <td class="py-3 pr-4">160</td>
-                                    <td class="py-3">Debounce delay in milliseconds</td>
-                                </tr>
+                                <tr class="border-b border-gray-200 dark:border-gray-700">
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">MAX_STABLE</code></td>
+                                    <td class="py-3 pr-4">10</td>
+                                    <td class="py-3">Stable words that won't be removed</td>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
                 <div class="bg-gray-50 dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700">
-                    <h3 class="text-xl font-semibold mb-4 text-gray-900 dark:text-white">CSS Classes</h3>
+                    <h3 class="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Timing Configuration</h3>
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="border-b border-gray-300 dark:border-gray-600">
-                                    <th class="text-left py-3 pr-4 font-semibold text-gray-900 dark:text-white">Class</th>
-                                    <th class="text-left py-3 font-semibold text-gray-900 dark:text-white">Element</th>
+                                    <th class="text-left py-3 pr-4 font-semibold text-gray-900 dark:text-white">Option</th>
+                                    <th class="text-left py-3 pr-4 font-semibold text-gray-900 dark:text-white">Default</th>
+                                    <th class="text-left py-3 font-semibold text-gray-900 dark:text-white">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-gray-600 dark:text-gray-300">
+                                <tr class="border-b border-gray-200 dark:border-gray-700">
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">DEBOUNCE_DELAY</code></td>
+                                    <td class="py-3 pr-4">160ms</td>
+                                    <td class="py-3">Delay before processing input</td>
+                                </tr>
+                                <tr class="border-b border-gray-200 dark:border-gray-700">
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">STORAGE_SYNC_DELAY</code></td>
+                                    <td class="py-3 pr-4">600ms</td>
+                                    <td class="py-3">Delay before saving to localStorage</td>
+                                </tr>
+                                <tr>
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">IDLE_CLEANUP_DELAY</code></td>
+                                    <td class="py-3 pr-4">2000ms</td>
+                                    <td class="py-3">Delay before cleaning unused data</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-gray-50 dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700 mt-8">
+                <h3 class="text-xl font-semibold mb-4 text-gray-900 dark:text-white">🎨 CSS Class Customization</h3>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-gray-300 dark:border-gray-600">
+                                    <th class="text-left py-3 pr-4 font-semibold text-gray-900 dark:text-white">Class Property</th>
+                                    <th class="text-left py-3 font-semibold text-gray-900 dark:text-white">Target Element</th>
                                 </tr>
                             </thead>
                             <tbody class="text-gray-600 dark:text-gray-300">
                                 <tr class="border-b border-gray-200 dark:border-gray-700">
                                     <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">popupContainer</code></td>
-                                    <td class="py-3">Main popup container</td>
+                                    <td class="py-3">Suggestions popup container</td>
                                 </tr>
                                 <tr class="border-b border-gray-200 dark:border-gray-700">
                                     <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">popupRow</code></td>
-                                    <td class="py-3">Individual suggestion row</td>
+                                    <td class="py-3">Individual suggestion rows</td>
+                                </tr>
+                                <tr class="border-b border-gray-200 dark:border-gray-700">
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">popupRowSelected</code></td>
+                                    <td class="py-3">Currently selected suggestion</td>
                                 </tr>
                                 <tr>
-                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">popupRowSelected</code></td>
-                                    <td class="py-3">Selected suggestion</td>
+                                    <td class="py-3 pr-4"><code class="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs">popupHint</code></td>
+                                    <td class="py-3">Hint text in popup</td>
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-3 text-gray-900 dark:text-white">Configuration Example:</h4>
+                        <div class="bg-gray-900 dark:bg-gray-700 rounded-lg overflow-hidden">
+                            <pre class="p-4 text-sm text-green-400 overflow-x-auto"><code class="language-javascript">GhostComplete.setGroupConfig('search', {
+  MAX_SUGGESTIONS: 8,
+  DEBOUNCE_DELAY: 100,
+  MAX_WORDS: 500
+}, {
+  popupContainer: 'my-search-popup',
+  popupRowSelected: 'active-suggestion',
+  popupHint: 'search-hint-text'
+});</code></pre>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -558,8 +712,7 @@ function SearchInput() {
             });
 
             GhostComplete.setGroupConfig('comments', {
-                MAX_SUGGESTIONS: 5,
-                MAX_PATTERNS: 150
+                MAX_SUGGESTIONS: 5
             });
 
             GhostComplete.setGroupConfig('coding', {

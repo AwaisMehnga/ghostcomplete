@@ -1,13 +1,11 @@
-// Enhanced TypeScript autocomplete with proper multi-field support
+// Enhanced TypeScript autocomplete with improved design and efficiency
 (function () {
   'use strict';
 
   interface AutocompleteConfig {
     MAX_WORDS: number;
-    MAX_PATTERNS: number;
     MAX_SUGGESTIONS: number;
     MAX_STABLE: number;
-    MAX_TOTAL: number;
     DEBOUNCE_DELAY: number;
     STORAGE_SYNC_DELAY: number;
     IDLE_CLEANUP_DELAY: number;
@@ -31,69 +29,53 @@
     height: number;
   }
 
-  interface StorageKeys {
-    wordsKey: string;
-    patternsKey: string;
-  }
-
-  interface PatternCache {
-    [context: string]: { [word: string]: number };
+  interface WordEntry {
+    lastUsed: number;
+    frequency: number;
   }
 
   interface PendingStorage {
     words: Set<string>;
-    patterns: Set<string>;
   }
 
   const DEFAULT_CONFIG: AutocompleteConfig = {
     MAX_WORDS: 300,
-    MAX_PATTERNS: 100,
     MAX_SUGGESTIONS: 5,
-    MAX_STABLE: 10,
-    MAX_TOTAL: 15,
+    MAX_STABLE: 100,
     DEBOUNCE_DELAY: 160,
     STORAGE_SYNC_DELAY: 600,
     IDLE_CLEANUP_DELAY: 2000
   };
 
+  let globalConfig = { ...DEFAULT_CONFIG };
   const groupConfigs: { [key: string]: AutocompleteConfig } = Object.create(null);
 
-  // Get or create group configuration
   function getGroupConfig(group = ""): AutocompleteConfig {
-    if (!groupConfigs[group]) {
-      groupConfigs[group] = { ...DEFAULT_CONFIG };
-    }
-    return groupConfigs[group];
+    return group ? (groupConfigs[group] || globalConfig) : globalConfig;
   }
 
-  // Update group configuration with new parameters and classes
   function updateGroupConfig(group = "", params: Partial<AutocompleteConfig> = {}, classes: any = {}): void {
-    if (!groupConfigs[group]) {
-      groupConfigs[group] = { ...DEFAULT_CONFIG };
-    }
-    Object.assign(groupConfigs[group], params);
-    if (classes) {
-      groupConfigs[group].classes = { ...groupConfigs[group].classes, ...classes };
+    const target = group ? (groupConfigs[group] = groupConfigs[group] || { ...globalConfig }) : globalConfig;
+    Object.assign(target, params);
+    if (classes) target.classes = { ...target.classes, ...classes };
+    if (!group) {
+      // Update global config affects all groups without explicit config
+      for (const g in groupConfigs) {
+        if (groupConfigs[g] === globalConfig) {
+          groupConfigs[g] = { ...globalConfig };
+        }
+      }
     }
   }
 
-  // Parse element configuration from data attributes
   function parseElementConfig(element: HTMLElement): string {
     const group = element.dataset.autocomplete || "";
-    let params: any = {};
-    let classes: any = {};
+    let params: any = {}, classes: any = {};
     
-    if (element.dataset.autocompleteParams) {
-      try {
-        params = JSON.parse(element.dataset.autocompleteParams);
-      } catch (e) {}
-    }
-    
-    if (element.dataset.autocompleteClasses) {
-      try {
-        classes = JSON.parse(element.dataset.autocompleteClasses);
-      } catch (e) {}
-    }
+    try {
+      if (element.dataset.autocompleteParams) params = JSON.parse(element.dataset.autocompleteParams);
+      if (element.dataset.autocompleteClasses) classes = JSON.parse(element.dataset.autocompleteClasses);
+    } catch (e) {}
     
     if (Object.keys(params).length > 0 || Object.keys(classes).length > 0) {
       updateGroupConfig(group, params, classes);
@@ -106,7 +88,6 @@
   let popup: HTMLDivElement | null = null;
   let mirror: HTMLDivElement | null = null;
 
-  // Per-element state tracking
   const elementStates = new Map<HTMLElement, {
     group: string;
     suggestions: string[];
@@ -116,18 +97,15 @@
     rafId: number | null;
   }>();
 
-  const wordsCacheMap: { [key: string]: string[] } = Object.create(null);
-  const patternsCacheMap: { [key: string]: PatternCache } = Object.create(null);
+  const wordsCacheMap: { [key: string]: { words: string[], entries: { [word: string]: WordEntry } } } = Object.create(null);
   const trieMap: { [key: string]: Trie } = Object.create(null);
-  const pendingStorage: PendingStorage = { words: new Set(), patterns: new Set() };
+  const pendingStorage: PendingStorage = { words: new Set() };
   const elementWordCount = new WeakMap<HTMLElement, number>();
 
-  // Generate storage keys for a group
-  function getStorageKeys(group: string): StorageKeys {
+  function getStorageKeys(group: string) {
     const base = group ? `_${group}` : "";
     return {
-      wordsKey: `custom_autocomplete_words${base}_v1`,
-      patternsKey: `custom_autocomplete_patterns${base}_v1`,
+      wordsKey: `ac_w${base}_v3`,
     };
   }
 
@@ -139,7 +117,6 @@
   class Trie {
     root = new TrieNode();
 
-    // Insert word into trie
     insert(word: string): void {
       if (!word) return;
       let node = this.root;
@@ -152,8 +129,7 @@
       node.isWord = true;
     }
 
-    // Search for words with given prefix
-    search(prefix: string, limit = DEFAULT_CONFIG.MAX_SUGGESTIONS): string[] {
+    search(prefix: string, limit = 5): string[] {
       const res: string[] = [];
       if (!prefix) return res;
       const lower = prefix.toLowerCase();
@@ -172,287 +148,183 @@
       if (node.isWord) acc.push(prefix);
       if (acc.length >= limit) return;
       for (const ch in node.children) {
-        if (!(ch in node.children)) continue;
         this._collect(node.children[ch], prefix + ch, acc, limit);
         if (acc.length >= limit) return;
       }
     }
   }
 
-  // Load words from localStorage for a group
   function loadWords(group = ""): string[] {
-    if (wordsCacheMap[group]) return wordsCacheMap[group].slice();
+    const cacheKey = group || "default";
+    if (wordsCacheMap[cacheKey]) return wordsCacheMap[cacheKey].words.slice();
+    
     const { wordsKey } = getStorageKeys(group);
     const config = getGroupConfig(group);
+    
     try {
       const raw = localStorage.getItem(wordsKey);
-      const arr = raw ? JSON.parse(raw) : [];
-      wordsCacheMap[group] = Array.isArray(arr) ? arr.slice(0, config.MAX_WORDS) : [];
+      const data = raw ? JSON.parse(raw) : { words: [], entries: {} };
+      
+      // Ensure we have the right structure
+      if (Array.isArray(data)) {
+        // Migrate old format
+        wordsCacheMap[cacheKey] = {
+          words: data.slice(0, config.MAX_WORDS),
+          entries: {}
+        };
+      } else {
+        wordsCacheMap[cacheKey] = {
+          words: (data.words || []).slice(0, config.MAX_WORDS),
+          entries: data.entries || {}
+        };
+      }
+      
       rebuildTrieForGroup(group);
-      return wordsCacheMap[group].slice();
+      return wordsCacheMap[cacheKey].words.slice();
     } catch (e) {
-      wordsCacheMap[group] = [];
-      trieMap[group] = new Trie();
+      wordsCacheMap[cacheKey] = { words: [], entries: {} };
+      trieMap[cacheKey] = new Trie();
       return [];
     }
   }
 
-  // Load patterns from localStorage for a group
-  function loadPatterns(group = ""): PatternCache {
-    if (patternsCacheMap[group]) return patternsCacheMap[group];
-    const { patternsKey } = getStorageKeys(group);
-    try {
-      const raw = localStorage.getItem(patternsKey);
-      const obj = raw ? JSON.parse(raw) : {};
-      patternsCacheMap[group] = obj && typeof obj === 'object' ? obj : {};
-      return patternsCacheMap[group];
-    } catch (e) {
-      patternsCacheMap[group] = {};
-      return patternsCacheMap[group];
-    }
-  }
-
-  // Rebuild trie from cached words for a group
   function rebuildTrieForGroup(group = ""): void {
-    const arr = wordsCacheMap[group] || loadWords(group);
+    const cacheKey = group || "default";
+    const words = wordsCacheMap[cacheKey]?.words || loadWords(group);
     const trie = new Trie();
-    for (let i = arr.length - 1; i >= 0; i--) {
-      trie.insert(arr[i]);
+    for (let i = words.length - 1; i >= 0; i--) {
+      trie.insert(words[i]);
     }
-    trieMap[group] = trie;
+    trieMap[cacheKey] = trie;
   }
 
-  // Queue words for saving to localStorage
   function queueSaveWords(group = ""): void {
     pendingStorage.words.add(group);
     scheduleStorageSync();
   }
 
-  // Queue patterns for saving to localStorage
-  function queueSavePatterns(group = ""): void {
-    pendingStorage.patterns.add(group);
-    scheduleStorageSync();
-  }
-
   let storageSyncTimer: number | null = null;
 
-  // Schedule storage synchronization
   function scheduleStorageSync(): void {
     const config = getGroupConfig("");
     if (storageSyncTimer) clearTimeout(storageSyncTimer);
     storageSyncTimer = window.setTimeout(flushStorageSync, config.STORAGE_SYNC_DELAY);
   }
 
-  // Flush pending storage operations
   function flushStorageSync(): void {
     pendingStorage.words.forEach((group) => {
       const { wordsKey } = getStorageKeys(group);
       const config = getGroupConfig(group);
+      const cacheKey = group || "default";
       try {
-        const arr = wordsCacheMap[group] || [];
-        localStorage.setItem(wordsKey, JSON.stringify(arr.slice(0, config.MAX_WORDS)));
-      } catch (e) {}
-    });
-    pendingStorage.patterns.forEach((group) => {
-      const { patternsKey } = getStorageKeys(group);
-      try {
-        const obj = patternsCacheMap[group] || {};
-        localStorage.setItem(patternsKey, JSON.stringify(obj));
+        const cache = wordsCacheMap[cacheKey];
+        if (cache) {
+          localStorage.setItem(wordsKey, JSON.stringify({
+            words: cache.words.slice(0, config.MAX_WORDS),
+            entries: cache.entries
+          }));
+        }
       } catch (e) {}
     });
     pendingStorage.words.clear();
-    pendingStorage.patterns.clear();
     storageSyncTimer = null;
   }
 
-  // Save pattern with context and next word
-  function savePattern(context: string, nextWord: string, group = ""): void {
-    if (!context || !nextWord) return;
-    
-    if (!patternsCacheMap[group]) {
-      loadPatterns(group);
-    }
-    
-    const config = getGroupConfig(group);
-    const patterns = patternsCacheMap[group];
-    const key = context.toLowerCase().trim();
-    const word = nextWord.toLowerCase().trim();
-
-    if (!patterns[key]) {
-      patterns[key] = {};
-    }
-
-    patterns[key][word] = (patterns[key][word] || 0) + 1;
-
-    const entries = Object.entries(patterns[key]);
-
-    if (entries.length > config.MAX_TOTAL) {
-      entries.sort((a, b) => b[1] - a[1]);
-      const top15 = entries.slice(0, config.MAX_TOTAL);
-      const bufferZone = top15.slice(config.MAX_STABLE);
-      const minFreqInBuffer = bufferZone.length > 0 ? bufferZone[bufferZone.length - 1][1] : 0;
-      const stableWords = top15.slice(0, config.MAX_STABLE);
-      const rebuilt = stableWords.concat(bufferZone);
-
-      if (stableWords.some(([w, freq]) => freq > minFreqInBuffer)) {
-        patterns[key] = Object.fromEntries(top15);
-      } else {
-        patterns[key] = Object.fromEntries(rebuilt);
-      }
-    }
-
-    const keys = Object.keys(patterns);
-    if (keys.length > config.MAX_PATTERNS) {
-      const sortedKeys = keys.sort((a, b) => {
-        const aSum = Object.values(patterns[a]).reduce((sum, count) => sum + count, 0);
-        const bSum = Object.values(patterns[b]).reduce((sum, count) => sum + count, 0);
-        return aSum - bSum;
-      });
-
-      const toRemove = Math.floor(config.MAX_PATTERNS * 0.2);
-      for (let i = 0; i < toRemove; i++) {
-        delete patterns[sortedKeys[i]];
-      }
-    }
-
-    patternsCacheMap[group] = patterns;
-    queueSavePatterns(group);
-  }
-
-  // Save word to cache and trie
   function saveWord(word: string, group = ""): void {
     word = (word || "").trim();
-    if (!word) return;
-    if (!wordsCacheMap[group]) loadWords(group);
+    if (!word || word.length < 3) return; // Enforce minimum 3 characters
+    
+    const cacheKey = group || "default";
+    if (!wordsCacheMap[cacheKey]) loadWords(group);
 
     const config = getGroupConfig(group);
-    const arr = wordsCacheMap[group];
+    const cache = wordsCacheMap[cacheKey];
     const lower = word.toLowerCase();
+    const now = Date.now();
+    
+    // Update or create entry
+    if (!cache.entries[lower]) {
+      cache.entries[lower] = { lastUsed: now, frequency: 1 };
+    } else {
+      cache.entries[lower].lastUsed = now;
+      cache.entries[lower].frequency++;
+    }
+    
+    // Remove if already exists in words array
     let replacedIndex = -1;
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i].toLowerCase() === lower) {
+    for (let i = 0; i < cache.words.length; i++) {
+      if (cache.words[i].toLowerCase() === lower) {
         replacedIndex = i;
         break;
       }
     }
-    if (replacedIndex >= 0) arr.splice(replacedIndex, 1);
-    arr.unshift(word);
-    if (arr.length > config.MAX_WORDS) arr.length = config.MAX_WORDS;
+    if (replacedIndex >= 0) cache.words.splice(replacedIndex, 1);
+    
+    // Add to front
+    cache.words.unshift(word);
+    
+    // Manage size with stable/buffer approach
+    if (cache.words.length > config.MAX_WORDS) {
+      // Keep most stable (frequent) words
+      const wordsWithScore = cache.words.map(w => ({
+        word: w,
+        entry: cache.entries[w.toLowerCase()] || { lastUsed: 0, frequency: 0 },
+        score: (cache.entries[w.toLowerCase()]?.frequency || 0) * 
+               Math.max(0.1, 1 - (now - (cache.entries[w.toLowerCase()]?.lastUsed || 0)) / (7 * 24 * 60 * 60 * 1000))
+      }));
+      
+      wordsWithScore.sort((a, b) => b.score - a.score);
+      const kept = wordsWithScore.slice(0, config.MAX_STABLE);
+      cache.words = kept.map(item => item.word);
+      
+      // Clean up entries for removed words
+      const keptWords = new Set(cache.words.map(w => w.toLowerCase()));
+      for (const key in cache.entries) {
+        if (!keptWords.has(key)) {
+          delete cache.entries[key];
+        }
+      }
+    }
 
-    if (!trieMap[group]) rebuildTrieForGroup(group);
-    trieMap[group].insert(word);
+    if (!trieMap[cacheKey]) rebuildTrieForGroup(group);
+    trieMap[cacheKey].insert(word);
 
     queueSaveWords(group);
-  }
-
-  // Get context words from text at caret position
-  function getContextWords(text: string, caretPos: number): string[] {
-    const before = text.slice(0, caretPos);
-    const words = before.split(/\s+/).filter(Boolean);
-    if (words.length === 0) return [];
-    const contexts: string[] = [];
-    if (words.length >= 1) contexts.push(words.slice(-1).join(' '));
-    if (words.length >= 2) contexts.push(words.slice(-2).join(' '));
-    if (words.length >= 3) contexts.push(words.slice(-3).join(' '));
-    return contexts;
-  }
-
-  // Predict next words based on context patterns
-  function predictNextWords(contexts: string[], group = ""): string[] {
-    if (!patternsCacheMap[group]) loadPatterns(group);
-    const config = getGroupConfig(group);
-    const patterns = patternsCacheMap[group];
-    const suggestions: { [key: string]: number } = Object.create(null);
-
-    contexts.forEach((context, priority) => {
-      const key = context.toLowerCase();
-      const ctxObj = patterns[key];
-      if (!ctxObj) return;
-      for (const w in ctxObj) {
-        if (!(w in ctxObj)) continue;
-        const count = ctxObj[w] || 0;
-        const weight = count * (3 - priority);
-        suggestions[w] = (suggestions[w] || 0) + weight;
-      }
-    });
-
-    const sorted = Object.entries(suggestions)
-      .sort(([, a], [, b]) => b - a)
-      .map(([word]) => word)
-      .slice(0, config.MAX_SUGGESTIONS);
-
-    return sorted;
-  }
-
-  // Analyze text incrementally for pattern learning
-  function analyzeIncremental(element: HTMLElement, group = ""): void {
+  }  function analyzeIncremental(element: HTMLElement, group = ""): void {
+    // Removed pattern analysis - only word-based autocomplete now
     try {
       const val = (element as HTMLInputElement | HTMLTextAreaElement).value || "";
       const words = val.split(/\s+/).filter(Boolean);
-      const lastCount = elementWordCount.get(element) || 0;
-      if (words.length <= lastCount) {
-        elementWordCount.set(element, words.length);
-        return;
-      }
-      
-      for (let i = Math.max(1, lastCount); i < words.length; i++) {
-        savePattern(words[i - 1], words[i], group);
-        if (i >= 2) savePattern(words.slice(i - 2, i).join(' '), words[i], group);
-        if (i >= 3) savePattern(words.slice(i - 3, i).join(' '), words[i], group);
-      }
       elementWordCount.set(element, words.length);
     } catch (e) {
-      elementWordCount.set(element, ((element as HTMLInputElement | HTMLTextAreaElement).value || "").split(/\s+/).filter(Boolean).length);
+      elementWordCount.set(element, 0);
     }
   }
 
-  // Create mirror element for caret position measurement
   function ensureMirror(): HTMLDivElement {
     if (mirror) return mirror;
     mirror = document.createElement("div");
-    mirror.style.position = "absolute";
-    mirror.style.visibility = "hidden";
-    mirror.style.whiteSpace = "pre-wrap";
-    mirror.style.wordWrap = "break-word";
-    mirror.style.top = "0";
-    mirror.style.left = "-9999px";
-    mirror.style.zIndex = "-1";
+    mirror.style.cssText = "position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;top:0;left:-9999px;z-index:-1";
     document.body.appendChild(mirror);
     return mirror;
   }
 
-  // Copy styles from source to target element
   function copyStyles(source: HTMLElement, target: HTMLElement): void {
     const cs = getComputedStyle(source);
-    const props = [
-      "boxSizing", "width", "height", "fontSize", "fontFamily", "fontWeight",
-      "fontStyle", "letterSpacing", "textTransform", "textIndent",
-      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-      "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
-      "lineHeight", "wordSpacing", "whiteSpace", "verticalAlign", "textAlign",
-      "direction", "unicodeBidi"
-    ];
+    const props = ["boxSizing","width","height","fontSize","fontFamily","fontWeight","fontStyle","letterSpacing","textTransform","textIndent","paddingTop","paddingRight","paddingBottom","paddingLeft","borderTopWidth","borderRightWidth","borderBottomWidth","borderLeftWidth","lineHeight","wordSpacing","whiteSpace","verticalAlign","textAlign","direction","unicodeBidi"];
     props.forEach(p => { 
       try { 
         (target.style as any)[p] = (cs as any)[p]; 
       } catch (e) {} 
     });
     
-    // Ensure exact same dimensions and positioning
-    target.style.width = cs.width;
-    target.style.height = cs.height;
-    target.style.margin = "0";
-    target.style.border = cs.border;
-    target.style.padding = cs.padding;
+    target.style.cssText += `width:${cs.width};height:${cs.height};margin:0;border:${cs.border};padding:${cs.padding}`;
     
     if (source.tagName.toLowerCase() === "input") {
-      target.style.whiteSpace = "pre";
-      target.style.overflow = "hidden";
-      target.style.display = "block";
+      target.style.cssText += "white-space:pre;overflow:hidden;display:block";
     }
   }
 
-  // Get caret position in element
   function getCaretPosition(el: HTMLElement): number {
     try {
       return (el as HTMLInputElement | HTMLTextAreaElement).selectionStart || 0;
@@ -461,24 +333,16 @@
     }
   }
 
-  // Get caret coordinates relative to viewport
   function getCaretCoords(el: HTMLElement, caretPos: number): CaretCoords {
     const m = ensureMirror();
     copyStyles(el, m);
 
     const value = (el as HTMLInputElement | HTMLTextAreaElement).value || "";
     const before = value.slice(0, caretPos);
-    const after = value.slice(caretPos);
 
-    function esc(s: string): string {
-      return s.replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }
+    const esc = (s: string): string => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-    m.innerHTML = esc(before) +
-      "<span id='__caret_marker__' style='display:inline-block; width:1px;'>​</span>" +
-      esc(after || " ");
+    m.innerHTML = esc(before) + "<span id='__caret_marker__' style='display:inline-block;width:1px;'>​</span>" + esc(value.slice(caretPos) || " ");
 
     const marker = document.getElementById("__caret_marker__");
     const elRect = el.getBoundingClientRect();
@@ -489,87 +353,50 @@
     
     const markerRect = marker.getBoundingClientRect();
     const mirrorRect = m.getBoundingClientRect();
-
-    // Account for input scrolling (horizontal)
     const inputEl = el as HTMLInputElement | HTMLTextAreaElement;
     const scrollLeft = inputEl.scrollLeft || 0;
     const scrollTop = inputEl.scrollTop || 0;
 
-    // Calculate relative position within the mirror (no padding/border adjustments)
     const relativeLeft = markerRect.left - mirrorRect.left;
     const relativeTop = markerRect.top - mirrorRect.top;
-
-    // Calculate final position - use element's content area directly
     const left = elRect.left + window.scrollX + relativeLeft - scrollLeft;
     const top = elRect.top + window.scrollY + relativeTop - scrollTop;
 
     return { left, top, height: markerRect.height || elRect.height };
   }
 
-  // Create ghost text element for inline preview
   function createGhost(): HTMLDivElement {
     if (ghost) return ghost;
     ghost = document.createElement("div");
-    ghost.style.position = "absolute";
-    ghost.style.pointerEvents = "none";
-    ghost.style.fontFamily = "inherit";
-    ghost.style.fontSize = "inherit";
-    ghost.style.lineHeight = "inherit";
-    ghost.style.color = "color-mix(in srgb, currentColor 35%, transparent)";
-    ghost.style.whiteSpace = "pre";
-    ghost.style.zIndex = "99998";
-    ghost.style.userSelect = "none";
-    ghost.style.overflow = "hidden";
-    ghost.style.textOverflow = "clip";
-    ghost.style.margin = "0";
-    ghost.style.padding = "0";
-    ghost.style.border = "none";
-    ghost.style.background = "transparent";
-    // Fallback for browsers that don't support color-mix
-    ghost.style.setProperty("color", "rgba(128, 128, 128, 0.6)", "important");
-    // Use CSS custom properties for better theme compatibility
-    if (CSS.supports("color", "color-mix(in srgb, currentColor 35%, transparent)")) {
-      ghost.style.setProperty("color", "color-mix(in srgb, currentColor 35%, transparent)", "important");
+    ghost.style.cssText = "position:absolute;pointer-events:none;font-family:inherit;font-size:inherit;line-height:inherit;color:color-mix(in srgb, currentColor 35%, transparent);white-space:pre;z-index:99998;user-select:none;overflow:hidden;text-overflow:clip;margin:0;padding:0;border:none;background:transparent";
+    
+    // Fallback for browsers without color-mix support
+    if (!CSS.supports("color", "color-mix(in srgb, currentColor 35%, transparent)")) {
+      ghost.style.color = "rgba(128,128,128,0.6)";
     }
+    
     document.body.appendChild(ghost);
     return ghost;
   }
 
-  // Create popup element for suggestions
   function createPopup(): HTMLDivElement {
     if (popup) return popup;
     popup = document.createElement("div");
     popup.className = "autocomplete-popup";
-    popup.style.position = "absolute";
-    popup.style.zIndex = "99999";
-    popup.style.background = "light-dark(#ffffff, #2d2d2d)";
-    popup.style.border = "1px solid light-dark(rgba(0,0,0,0.12), rgba(255,255,255,0.12))";
-    popup.style.boxShadow = "0 6px 18px light-dark(rgba(0,0,0,0.12), rgba(0,0,0,0.4))";
-    popup.style.borderRadius = "6px";
-    popup.style.padding = "6px 8px";
-    popup.style.fontSize = "13px";
-    popup.style.cursor = "default";
-    popup.style.userSelect = "none";
-    popup.style.minWidth = "120px";
-    popup.style.maxWidth = "300px";
-    popup.style.backdropFilter = "blur(8px)";
-    popup.style.setProperty("-webkit-backdrop-filter", "blur(8px)");
-    popup.style.color = "light-dark(#000000, #ffffff)";
+    popup.style.cssText = "position:absolute;z-index:99999;background:light-dark(#ffffff,#1e1e1e);border:1px solid light-dark(rgba(0,0,0,0.12),rgba(255,255,255,0.12));box-shadow:0 8px 32px light-dark(rgba(0,0,0,0.1),rgba(0,0,0,0.5));border-radius:8px;padding:8px;font-size:13px;cursor:default;user-select:none;min-width:140px;max-width:320px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:light-dark(#333,#e0e0e0);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
     popup.setAttribute('role', 'listbox');
 
-    // Fallback for browsers that don't support light-dark()
-    if (!CSS.supports("color", "light-dark(#ffffff, #2d2d2d)")) {
-      // Check if user prefers dark mode
+    // Fallback for browsers without light-dark support
+    if (!CSS.supports("color", "light-dark(#ffffff, #1e1e1e)")) {
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      popup.style.background = prefersDark ? "#2d2d2d" : "#ffffff";
-      popup.style.border = prefersDark ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(0,0,0,0.12)";
-      popup.style.boxShadow = prefersDark ? "0 6px 18px rgba(0,0,0,0.4)" : "0 6px 18px rgba(0,0,0,0.12)";
-      popup.style.color = prefersDark ? "#ffffff" : "#000000";
+      const darkStyles = "background:#1e1e1e;border:1px solid rgba(255,255,255,0.12);box-shadow:0 8px 32px rgba(0,0,0,0.5);color:#e0e0e0";
+      const lightStyles = "background:#ffffff;border:1px solid rgba(0,0,0,0.12);box-shadow:0 8px 32px rgba(0,0,0,0.1);color:#333";
+      popup.style.cssText += (prefersDark ? darkStyles : lightStyles);
     }
 
     popup.addEventListener('mousedown', (ev) => {
       const target = ev.target as HTMLElement;
-      const row = target.closest && target.closest('[data-sugg-index]') as HTMLElement;
+      const row = target.closest('[data-sugg-index]') as HTMLElement;
       if (!row) return;
       ev.preventDefault();
       const idx = parseInt(row.dataset.suggIndex!, 10);
@@ -586,7 +413,7 @@
 
     popup.addEventListener('mouseover', (ev) => {
       const target = ev.target as HTMLElement;
-      const row = target.closest && target.closest('[data-sugg-index]') as HTMLElement;
+      const row = target.closest('[data-sugg-index]') as HTMLElement;
       if (!row) return;
       const idx = parseInt(row.dataset.suggIndex!, 10);
       if (!Number.isFinite(idx)) return;
@@ -603,7 +430,6 @@
     return popup;
   }
 
-  // Remove UI elements for specific element
   function removeUIForElement(element: HTMLElement): void {
     const state = elementStates.get(element);
     if (!state) return;
@@ -614,19 +440,16 @@
     state.selectedIndex = 0;
   }
 
-  // Find suggestions for token using trie
   function findSuggestionsForToken(token: string, group = ""): string[] {
-    if (!token) return [];
+    if (!token) return []; // Allow suggestions from 1 character
     if (!trieMap[group]) loadWords(group);
     const config = getGroupConfig(group);
     const trie = trieMap[group];
     if (!trie) return [];
     const results = trie.search(token, config.MAX_SUGGESTIONS);
-    const filtered = results.filter(w => w.toLowerCase() !== token.toLowerCase());
-    return filtered.slice(0, config.MAX_SUGGESTIONS);
+    return results.filter(w => w.toLowerCase() !== token.toLowerCase()).slice(0, config.MAX_SUGGESTIONS);
   }
 
-  // Schedule UI update for specific element
   function scheduleUIUpdate(element: HTMLElement): void {
     const state = elementStates.get(element);
     if (!state) return;
@@ -644,15 +467,16 @@
 
   let lastPopupPos = { left: -1, top: -1 };
 
-  // Main UI update function for specific element
   function updateUI(element: HTMLElement): void {
     const state = elementStates.get(element);
     if (!state) return;
     
     const pos = getCaretPosition(element);
-    const vb = getWordBoundsAtCaret((element as HTMLInputElement | HTMLTextAreaElement).value, pos);
+    const val = (element as HTMLInputElement | HTMLTextAreaElement).value || "";
+    const vb = getWordBoundsAtCaret(val, pos);
     const token = vb.word;
     const config = getGroupConfig(state.group);
+    const elRect = element.getBoundingClientRect();
 
     let suggestions: string[] = [];
     let suggestionType = "";
@@ -660,14 +484,8 @@
     if (token) {
       suggestions = findSuggestionsForToken(token, state.group);
       if (suggestions.length > 0) suggestionType = "completion";
-    } else {
-      const contexts = getContextWords((element as HTMLInputElement | HTMLTextAreaElement).value, pos);
-      const predicted = predictNextWords(contexts, state.group);
-      if (predicted.length > 0) {
-        suggestions = predicted;
-        suggestionType = "prediction";
-      }
     }
+    // Removed prediction functionality - only autocomplete when typing
 
     if (suggestions.length === 0) {
       state.suggestions = [];
@@ -682,37 +500,48 @@
     if (state.suggestions.join('|') !== prevSuggestions) state.selectedIndex = 0;
 
     const primarySuggestion = state.suggestions[0];
-    const appended = suggestionType === "completion"
-      ? primarySuggestion.slice(token.length)
-      : primarySuggestion;
+    const appended = suggestionType === "completion" ? primarySuggestion.slice(token.length) : primarySuggestion;
 
     const coords = getCaretCoords(element, pos);
 
+    // Enhanced ghost text positioning - constrain within input bounds
     const g = createGhost();
     g.style.display = "block";
     const cs = getComputedStyle(element);
     
-    // Copy exact font properties for perfect alignment
     g.style.fontFamily = cs.fontFamily;
     g.style.fontSize = cs.fontSize;
     g.style.fontWeight = cs.fontWeight;
     g.style.fontStyle = cs.fontStyle;
     g.style.lineHeight = cs.lineHeight;
     g.style.letterSpacing = cs.letterSpacing;
-    g.style.wordSpacing = cs.wordSpacing;
-    g.style.textTransform = cs.textTransform;
     
-    g.style.left = `${coords.left}px`;
+    // Constrain ghost text within input boundaries
+    const inputEl = element as HTMLInputElement | HTMLTextAreaElement;
+    const paddingLeft = parseInt(cs.paddingLeft) || 0;
+    const paddingRight = parseInt(cs.paddingRight) || 0;
+    const borderLeft = parseInt(cs.borderLeftWidth) || 0;
+    const borderRight = parseInt(cs.borderRightWidth) || 0;
+    
+    const contentWidth = elRect.width - paddingLeft - paddingRight - borderLeft - borderRight;
+    const maxGhostLeft = elRect.left + window.scrollX + contentWidth + paddingLeft + borderLeft;
+    const ghostLeft = Math.min(coords.left, maxGhostLeft - 50); // Leave some margin
+    
+    g.style.left = `${ghostLeft}px`;
     g.style.top = `${coords.top}px`;
+    g.style.maxWidth = `${Math.max(50, maxGhostLeft - ghostLeft)}px`;
+    g.style.overflow = "hidden";
+    g.style.textOverflow = "ellipsis";
     g.textContent = appended;
 
+    // Enhanced popup with better design
     const p = createPopup();
     p.style.display = "block";
 
     const existingRows = Array.from(p.querySelectorAll('[data-sugg-index]'));
-    let needsRebuild = false;
-    if (existingRows.length !== state.suggestions.length) needsRebuild = true;
-    else {
+    let needsRebuild = existingRows.length !== state.suggestions.length;
+    
+    if (!needsRebuild) {
       for (let i = 0; i < existingRows.length; i++) {
         if (existingRows[i].textContent !== state.suggestions[i]) { 
           needsRebuild = true; 
@@ -724,10 +553,8 @@
     if (needsRebuild) {
       p.innerHTML = '';
       
-      if (config.classes && config.classes.popupContainer) {
+      if (config.classes?.popupContainer) {
         p.className = config.classes.popupContainer;
-      } else {
-        p.className = '';
       }
       
       const frag = document.createDocumentFragment();
@@ -735,99 +562,74 @@
         const row = document.createElement('div');
         row.textContent = suggestion;
         row.setAttribute('data-sugg-index', String(index));
-        row.style.padding = "4px 6px";
-        row.style.borderRadius = "4px";
-        row.style.cursor = "pointer";
-        row.style.whiteSpace = "nowrap";
+        row.style.cssText = "padding:8px 12px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all 0.15s ease;font-weight:400;display:flex;align-items:center";
         
-        if (config.classes && config.classes.popupRow) {
-          row.className = config.classes.popupRow;
-        }
-        
+        if (config.classes?.popupRow) row.className = config.classes.popupRow;
         frag.appendChild(row);
       });
 
       const hint = document.createElement('div');
-      const typeLabel = suggestionType === "prediction" ? "AI prediction" : "completion";
-      const navHint = state.suggestions.length > 1 ? " • ↑↓ to navigate" : "";
-      hint.textContent = `${typeLabel} • Tab / → to accept${navHint}`;
-      hint.style.fontSize = "11px";
-      hint.style.color = "rgba(0,0,0,0.5)";
-      hint.style.marginTop = "6px";
+      const typeLabel = "complete";
+      const navHint = state.suggestions.length > 1 ? " • ↑↓" : "";
+      hint.textContent = `${typeLabel} • Tab/→${navHint}`;
+      hint.style.cssText = "font-size:11px;opacity:0.6;margin-top:8px;padding:0 4px;border-top:1px solid light-dark(rgba(0,0,0,0.06),rgba(255,255,255,0.06))";
       
-      if (config.classes && config.classes.popupHint) {
-        hint.className = config.classes.popupHint;
-      }
-      
+      if (config.classes?.popupHint) hint.className = config.classes.popupHint;
       frag.appendChild(hint);
       p.appendChild(frag);
     }
 
     updatePopupSelection(element);
 
+    // Enhanced popup positioning with better collision detection
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const scrollX = window.scrollX;
     const scrollY = window.scrollY;
     
-    // Get popup dimensions (force layout if needed)
     p.style.visibility = "hidden";
     p.style.display = "block";
     const popupRect = p.getBoundingClientRect();
-    const popupWidth = popupRect.width || Math.min(300, Math.max(120, p.offsetWidth));
-    const popupHeight = popupRect.height || 140;
+    const popupWidth = Math.max(140, Math.min(320, popupRect.width));
+    const popupHeight = popupRect.height;
     p.style.visibility = "";
 
-    let popupLeft = coords.left;
-    let popupTop = coords.top + coords.height + 6;
-
-    const elRect = element.getBoundingClientRect();
     const inputLeft = elRect.left + scrollX;
     const inputRight = inputLeft + elRect.width;
     const inputTop = elRect.top + scrollY;
     const inputBottom = inputTop + elRect.height;
     
-    // Horizontal positioning - prefer alignment with input start, but keep within bounds
-    popupLeft = Math.max(inputLeft, popupLeft);
-    
-    // If popup extends beyond input right edge, align to right edge
+    // Smart horizontal positioning
+    let popupLeft = Math.max(inputLeft, coords.left);
     if (popupLeft + popupWidth > inputRight) {
       popupLeft = Math.max(inputLeft, inputRight - popupWidth);
     }
     
-    // Ensure popup stays within viewport with margins
-    const marginLeft = 10;
-    const marginRight = 10;
-    if (popupLeft + popupWidth > viewportWidth + scrollX - marginRight) {
-      popupLeft = viewportWidth + scrollX - popupWidth - marginRight;
-    }
-    if (popupLeft < scrollX + marginLeft) {
-      popupLeft = scrollX + marginLeft;
-    }
+    // Viewport boundary checks with margins
+    const margin = 12;
+    popupLeft = Math.max(scrollX + margin, Math.min(popupLeft, viewportWidth + scrollX - popupWidth - margin));
 
-    // Vertical positioning - try below first, then above if no space
+    // Smart vertical positioning
     const spaceBelow = (viewportHeight + scrollY) - (coords.top + coords.height);
     const spaceAbove = coords.top - scrollY;
-    const preferredGap = 6;
+    const gap = 8;
     
-    if (spaceBelow >= popupHeight + preferredGap) {
-      // Show below
-      popupTop = coords.top + coords.height + preferredGap;
-    } else if (spaceAbove >= popupHeight + preferredGap) {
-      // Show above
-      popupTop = coords.top - popupHeight - preferredGap;
+    let popupTop: number;
+    if (spaceBelow >= popupHeight + gap) {
+      popupTop = coords.top + coords.height + gap;
+    } else if (spaceAbove >= popupHeight + gap) {
+      popupTop = coords.top - popupHeight - gap;
     } else {
-      // Show in direction with more space, adjust height if needed
       if (spaceBelow > spaceAbove) {
-        popupTop = coords.top + coords.height + preferredGap;
-        const maxHeight = spaceBelow - preferredGap - 10;
+        popupTop = coords.top + coords.height + gap;
+        const maxHeight = spaceBelow - gap - margin;
         if (popupHeight > maxHeight) {
           p.style.maxHeight = `${maxHeight}px`;
           p.style.overflowY = "auto";
         }
       } else {
-        const maxHeight = spaceAbove - preferredGap - 10;
-        popupTop = coords.top - Math.min(popupHeight, maxHeight) - preferredGap;
+        const maxHeight = spaceAbove - gap - margin;
+        popupTop = coords.top - Math.min(popupHeight, maxHeight) - gap;
         if (popupHeight > maxHeight) {
           p.style.maxHeight = `${maxHeight}px`;
           p.style.overflowY = "auto";
@@ -835,45 +637,40 @@
       }
     }
 
-    // Apply positioning only if changed to avoid unnecessary reflows
     if (lastPopupPos.left !== popupLeft || lastPopupPos.top !== popupTop) {
       p.style.left = `${popupLeft}px`;
       p.style.top = `${popupTop}px`;
-      lastPopupPos.left = popupLeft;
-      lastPopupPos.top = popupTop;
+      lastPopupPos = { left: popupLeft, top: popupTop };
     }
   }
 
-  // Update popup selection highlighting
   function updatePopupSelection(element: HTMLElement): void {
     const state = elementStates.get(element);
     if (!popup || !state || state.suggestions.length === 0) return;
     
     const config = getGroupConfig(state.group);
-    const rows = Array.from(popup.querySelectorAll('[data-sugg-index]'));
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i] as HTMLElement;
+    const rows = Array.from(popup.querySelectorAll('[data-sugg-index]')) as HTMLElement[];
+    
+    rows.forEach((row, i) => {
       if (i === state.selectedIndex) {
-        // Use CSS custom properties for better theme compatibility
-        row.style.background = "light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.12))";
-        row.style.setProperty("background", "light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.12))", "important");
+        row.style.background = "light-dark(rgba(59,130,246,0.1),rgba(59,130,246,0.2))";
+        row.style.color = "light-dark(rgb(59,130,246),rgb(147,197,253))";
+        row.style.transform = "translateX(2px)";
         
-        // Fallback for browsers without light-dark support
-        if (!CSS.supports("color", "light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.12))")) {
+        if (!CSS.supports("color", "light-dark(rgba(59,130,246,0.1),rgba(59,130,246,0.2))")) {
           const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-          row.style.background = prefersDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)";
+          row.style.background = prefersDark ? "rgba(59,130,246,0.2)" : "rgba(59,130,246,0.1)";
+          row.style.color = prefersDark ? "rgb(147,197,253)" : "rgb(59,130,246)";
         }
         
-        if (config.classes && config.classes.popupRowSelected) {
-          row.classList.add(config.classes.popupRowSelected);
-        }
+        if (config.classes?.popupRowSelected) row.classList.add(config.classes.popupRowSelected);
       } else {
         row.style.background = "transparent";
-        if (config.classes && config.classes.popupRowSelected) {
-          row.classList.remove(config.classes.popupRowSelected);
-        }
+        row.style.color = "inherit";
+        row.style.transform = "translateX(0)";
+        if (config.classes?.popupRowSelected) row.classList.remove(config.classes.popupRowSelected);
       }
-    }
+    });
 
     if (ghost && state.suggestions[state.selectedIndex]) {
       const pos = getCaretPosition(element);
@@ -887,7 +684,6 @@
     }
   }
 
-  // Get word boundaries at caret position
   function getWordBoundsAtCaret(text: string, caretIndex: number): WordBounds {
     if (!text) return { start: 0, end: 0, word: "" };
     let start = caretIndex;
@@ -897,79 +693,59 @@
     return { start, end, word: text.slice(start, end) };
   }
 
-  // Scroll element to ensure caret is visible
   function scrollToCaretPosition(element: HTMLElement): void {
     const inputEl = element as HTMLInputElement | HTMLTextAreaElement;
     const caretPos = getCaretPosition(element);
     
-    // For textarea elements, we need to scroll to make the caret visible
     if (inputEl.tagName === 'TEXTAREA') {
-      // Create a temporary element to measure text dimensions
       const temp = document.createElement('div');
-      temp.style.position = 'absolute';
-      temp.style.visibility = 'hidden';
-      temp.style.whiteSpace = 'pre-wrap';
-      temp.style.wordWrap = 'break-word';
-      temp.style.fontFamily = getComputedStyle(inputEl).fontFamily;
-      temp.style.fontSize = getComputedStyle(inputEl).fontSize;
-      temp.style.lineHeight = getComputedStyle(inputEl).lineHeight;
+      temp.style.cssText = "position:absolute;visibility:hidden;white-space:pre-wrap;word-wrap:break-word";
+      
+      const cs = getComputedStyle(inputEl);
+      temp.style.fontFamily = cs.fontFamily;
+      temp.style.fontSize = cs.fontSize;
+      temp.style.lineHeight = cs.lineHeight;
       temp.style.width = inputEl.clientWidth + 'px';
       
       document.body.appendChild(temp);
+      temp.textContent = inputEl.value.substring(0, caretPos);
       
-      // Get text up to caret position
-      const textUpToCaret = inputEl.value.substring(0, caretPos);
-      temp.textContent = textUpToCaret;
-      
-      // Calculate which line the caret is on
-      const lineHeight = parseInt(getComputedStyle(inputEl).lineHeight) || parseInt(getComputedStyle(inputEl).fontSize);
+      const lineHeight = parseInt(cs.lineHeight) || parseInt(cs.fontSize);
       const caretTop = temp.offsetHeight;
-      
       document.body.removeChild(temp);
       
-      // Scroll to ensure caret line is visible
       const scrollTop = inputEl.scrollTop;
       const clientHeight = inputEl.clientHeight;
       
       if (caretTop < scrollTop) {
-        // Caret is above visible area
         inputEl.scrollTop = Math.max(0, caretTop - lineHeight);
       } else if (caretTop > scrollTop + clientHeight - lineHeight) {
-        // Caret is below visible area
         inputEl.scrollTop = caretTop - clientHeight + lineHeight;
       }
     } else {
-      // For input elements, scroll horizontally to caret
-      const textUpToCaret = inputEl.value.substring(0, caretPos);
-      
-      // Create temporary span to measure text width
       const temp = document.createElement('span');
-      temp.style.position = 'absolute';
-      temp.style.visibility = 'hidden';
-      temp.style.fontFamily = getComputedStyle(inputEl).fontFamily;
-      temp.style.fontSize = getComputedStyle(inputEl).fontSize;
-      temp.style.whiteSpace = 'pre';
-      temp.textContent = textUpToCaret;
+      temp.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
+      
+      const cs = getComputedStyle(inputEl);
+      temp.style.fontFamily = cs.fontFamily;
+      temp.style.fontSize = cs.fontSize;
+      temp.textContent = inputEl.value.substring(0, caretPos);
       
       document.body.appendChild(temp);
       const caretLeft = temp.offsetWidth;
       document.body.removeChild(temp);
       
-      // Scroll horizontally to ensure caret is visible
       const scrollLeft = inputEl.scrollLeft;
       const clientWidth = inputEl.clientWidth;
       
       if (caretLeft < scrollLeft) {
-        // Caret is to the left of visible area
         inputEl.scrollLeft = Math.max(0, caretLeft - 20);
       } else if (caretLeft > scrollLeft + clientWidth - 20) {
-        // Caret is to the right of visible area
         inputEl.scrollLeft = caretLeft - clientWidth + 40;
       }
     }
   }
 
-  // Replace current token with selected suggestion
   function replaceTokenWithSuggestion(element: HTMLElement): void {
     const state = elementStates.get(element);
     if (!state || state.suggestions.length === 0) return;
@@ -997,15 +773,12 @@
     inputEl.value = rebuilt;
     try { inputEl.setSelectionRange(newCaret, newCaret); } catch {}
     
-    // Auto-scroll to ensure the caret is visible after accepting suggestion
     scrollToCaretPosition(element);
-    
     inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     saveWord(currentSuggestion, state.group);
-    elementWordCount.set(element, (inputEl.value || "").split(/\s+/).filter(Boolean).length);
+    elementWordCount.set(element, rebuilt.split(/\s+/).filter(Boolean).length);
   }
 
-  // Accept current suggestion
   function acceptSuggestion(element: HTMLElement): void {
     replaceTokenWithSuggestion(element);
     const state = elementStates.get(element);
@@ -1017,14 +790,12 @@
     try { element.focus(); } catch {}
   }
 
-  // Handle focus event on autocomplete elements
   function onFocus(e: Event): void {
     const target = e.target as HTMLElement;
-    if (!target || !target.dataset || target.dataset.autocomplete === undefined) return;
+    if (!target?.dataset || target.dataset.autocomplete === undefined) return;
     
     const group = parseElementConfig(target);
     
-    // Initialize state for this element
     if (!elementStates.has(target)) {
       elementStates.set(target, {
         group,
@@ -1035,8 +806,7 @@
         rafId: null
       });
     } else {
-      const state = elementStates.get(target)!;
-      state.group = group; // Update group in case it changed
+      elementStates.get(target)!.group = group;
     }
 
     try {
@@ -1044,26 +814,20 @@
       inputEl.setAttribute("autocomplete", "off");
       inputEl.setAttribute("spellcheck", "false");
       inputEl.setAttribute("autocorrect", "off");
-    } catch (err) {}
+    } catch {}
 
     loadWords(group);
-    loadPatterns(group);
-
     elementWordCount.set(target, ((target as HTMLInputElement | HTMLTextAreaElement).value || "").split(/\s+/).filter(Boolean).length);
-
     scheduleUIUpdate(target);
   }
 
-  // Handle input event
   function onInput(e: Event): void {
     const target = e.target as HTMLElement;
     const state = elementStates.get(target);
     if (!state || state.isComposing) return;
-    
     scheduleUIUpdate(target);
   }
 
-  // Handle keydown events for navigation and acceptance
   function onKeyDown(e: KeyboardEvent): void {
     const target = e.target as HTMLElement;
     const state = elementStates.get(target);
@@ -1093,11 +857,9 @@
     if (e.key === " " || e.key === "Enter") {
       const pos = getCaretPosition(target);
       const vb = getWordBoundsAtCaret((target as HTMLInputElement | HTMLTextAreaElement).value, pos);
-      const w = vb.word && vb.word.trim();
+      const w = vb.word?.trim();
       if (w) saveWord(w, state.group);
-
       analyzeIncremental(target, state.group);
-
       state.suggestions = [];
       state.selectedIndex = 0;
       removeUIForElement(target);
@@ -1112,20 +874,19 @@
     }
   }
 
-  // Handle blur event
   function onBlur(e: Event): void {
     const target = e.target as HTMLElement;
-    if (!target || !target.dataset || target.dataset.autocomplete === undefined) return;
+    if (!target?.dataset || target.dataset.autocomplete === undefined) return;
     
     setTimeout(() => {
       try {
         const pos = getCaretPosition(target);
         const vb = getWordBoundsAtCaret((target as HTMLInputElement | HTMLTextAreaElement).value, pos);
-        const w = vb.word && vb.word.trim();
+        const w = vb.word?.trim();
         const group = parseElementConfig(target);
         if (w) saveWord(w, group);
         analyzeIncremental(target, group);
-      } catch (err) {}
+      } catch {}
       
       const state = elementStates.get(target);
       if (state) {
@@ -1138,191 +899,87 @@
     }, 150);
   }
 
-  // Handle composition start
   function onCompositionStart(e: Event): void {
-    const target = e.target as HTMLElement;
-    const state = elementStates.get(target);
+    const state = elementStates.get(e.target as HTMLElement);
     if (state) state.isComposing = true;
   }
 
-  // Handle composition end
   function onCompositionEnd(e: Event): void {
-    const target = e.target as HTMLElement;
-    const state = elementStates.get(target);
+    const state = elementStates.get(e.target as HTMLElement);
     if (state) {
       state.isComposing = false;
-      scheduleUIUpdate(target);
+      scheduleUIUpdate(e.target as HTMLElement);
     }
   }
 
-  // Handle document clicks to close popup
   function onDocClick(e: Event): void {
     if (!popup) return;
     const target = e.target as HTMLElement;
     
-    // Find if click is on an autocomplete element
-    let autocompleteEl: HTMLElement | null = null;
-    if (target.dataset && target.dataset.autocomplete !== undefined) {
-      autocompleteEl = target;
-    } else {
-      autocompleteEl = target.closest('[data-autocomplete]') as HTMLElement;
-    }
+    let autocompleteEl: HTMLElement | null = target.dataset?.autocomplete !== undefined 
+      ? target 
+      : target.closest?.('[data-autocomplete]') as HTMLElement;
     
-    if (autocompleteEl && elementStates.has(autocompleteEl)) return;
-    if (popup.contains(target)) return;
+    if ((autocompleteEl && elementStates.has(autocompleteEl)) || popup.contains(target)) return;
     
-    // Clear all element states
-    elementStates.forEach((state, element) => {
+    elementStates.forEach((state) => {
       state.suggestions = [];
       state.selectedIndex = 0;
-      removeUIForElement(element);
     });
+    
+    if (ghost) ghost.style.display = "none";
+    if (popup) popup.style.display = "none";
   }
 
-  // Attach event listeners
-  document.addEventListener("focusin", onFocus, true);
-  document.addEventListener("input", onInput, { capture: true, passive: true });
-  document.addEventListener("keydown", onKeyDown, true);
-  document.addEventListener("blur", onBlur, true);
-  document.addEventListener("compositionstart", onCompositionStart, true);
-  document.addEventListener("compositionend", onCompositionEnd, true);
-  document.addEventListener("click", onDocClick, true);
+  // Event listeners
+  const events = [
+    ["focusin", onFocus, true],
+    ["input", onInput, { capture: true, passive: true }],
+    ["keydown", onKeyDown, true],
+    ["blur", onBlur, true],
+    ["compositionstart", onCompositionStart, true],
+    ["compositionend", onCompositionEnd, true],
+    ["click", onDocClick, true]
+  ] as const;
 
-  // Inject minimal styles
+  events.forEach(([event, handler, options]) => {
+    document.addEventListener(event, handler as EventListener, options);
+  });
+
+  // Inject optimized styles
   const style = document.createElement("style");
-  style.textContent = `
-    /* Autocomplete input styling */
-    input[data-autocomplete], textarea[data-autocomplete] {
-      font-family: inherit;
-      font-size: inherit;
-      line-height: inherit;
-    }
-    
-    /* Popup suggestion row styling */
-    [data-sugg-index] { 
-      padding: 6px 8px; 
-      border-radius: 4px; 
-      cursor: pointer; 
-      white-space: nowrap; 
-      transition: background-color 0.15s ease;
-      color: inherit;
-    }
-    
-    /* Hover effect for suggestion rows */
-    [data-sugg-index]:hover {
-      background-color: light-dark(rgba(0,0,0,0.05), rgba(255,255,255,0.08)) !important;
-    }
-    
-    /* Theme-aware scrollbar for popup */
-    .autocomplete-popup {
-      scrollbar-width: thin;
-      scrollbar-color: light-dark(rgba(0,0,0,0.2), rgba(255,255,255,0.2)) transparent;
-    }
-    
-    .autocomplete-popup::-webkit-scrollbar {
-      width: 6px;
-    }
-    
-    .autocomplete-popup::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    
-    .autocomplete-popup::-webkit-scrollbar-thumb {
-      background-color: light-dark(rgba(0,0,0,0.2), rgba(255,255,255,0.2));
-      border-radius: 3px;
-    }
-    
-    .autocomplete-popup::-webkit-scrollbar-thumb:hover {
-      background-color: light-dark(rgba(0,0,0,0.3), rgba(255,255,255,0.3));
-    }
-    
-    /* Fallback for browsers without light-dark support */
-    @media (prefers-color-scheme: dark) {
-      [data-sugg-index]:hover {
-        background-color: rgba(255,255,255,0.08) !important;
-      }
-      
-      .autocomplete-popup {
-        scrollbar-color: rgba(255,255,255,0.2) transparent;
-      }
-      
-      .autocomplete-popup::-webkit-scrollbar-thumb {
-        background-color: rgba(255,255,255,0.2);
-      }
-      
-      .autocomplete-popup::-webkit-scrollbar-thumb:hover {
-        background-color: rgba(255,255,255,0.3);
-      }
-    }
-    
-    @media (prefers-color-scheme: light) {
-      [data-sugg-index]:hover {
-        background-color: rgba(0,0,0,0.05) !important;
-      }
-      
-      .autocomplete-popup {
-        scrollbar-color: rgba(0,0,0,0.2) transparent;
-      }
-      
-      .autocomplete-popup::-webkit-scrollbar-thumb {
-        background-color: rgba(0,0,0,0.2);
-      }
-      
-      .autocomplete-popup::-webkit-scrollbar-thumb:hover {
-        background-color: rgba(0,0,0,0.3);
-      }
-    }
-  `;
+  style.textContent = `input[data-autocomplete],textarea[data-autocomplete]{font-family:inherit}[data-sugg-index]{padding:8px 12px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .15s ease;color:inherit}[data-sugg-index]:hover{background:light-dark(rgba(59,130,246,.05),rgba(59,130,246,.15))!important}.autocomplete-popup{scrollbar-width:thin;scrollbar-color:light-dark(rgba(0,0,0,.2),rgba(255,255,255,.2)) transparent}.autocomplete-popup::-webkit-scrollbar{width:6px}.autocomplete-popup::-webkit-scrollbar-track{background:transparent}.autocomplete-popup::-webkit-scrollbar-thumb{background:light-dark(rgba(0,0,0,.2),rgba(255,255,255,.2));border-radius:3px}.autocomplete-popup::-webkit-scrollbar-thumb:hover{background:light-dark(rgba(0,0,0,.3),rgba(255,255,255,.3))}@media (prefers-color-scheme:dark){[data-sugg-index]:hover{background:rgba(59,130,246,.15)!important}.autocomplete-popup{scrollbar-color:rgba(255,255,255,.2) transparent}.autocomplete-popup::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2)}.autocomplete-popup::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.3)}}@media (prefers-color-scheme:light){[data-sugg-index]:hover{background:rgba(59,130,246,.05)!important}.autocomplete-popup{scrollbar-color:rgba(0,0,0,.2) transparent}.autocomplete-popup::-webkit-scrollbar-thumb{background:rgba(0,0,0,.2)}.autocomplete-popup::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.3)}}`;
   document.head.appendChild(style);
 
   // Cleanup and maintenance
   function idleCleanup(): void {
     for (const group in wordsCacheMap) {
-      if (!(group in wordsCacheMap)) continue;
       const config = getGroupConfig(group);
-      const arr = wordsCacheMap[group];
-      if (arr && arr.length > config.MAX_WORDS) wordsCacheMap[group] = arr.slice(0, config.MAX_WORDS);
-    }
-    for (const group in patternsCacheMap) {
-      if (!(group in patternsCacheMap)) continue;
-      const config = getGroupConfig(group);
-      const patterns = patternsCacheMap[group];
-      for (const key in patterns) {
-        if (!(key in patterns)) continue;
-        const entries = Object.entries(patterns[key]);
-        if (entries.length > config.MAX_TOTAL) {
-          entries.sort((a, b) => b[1] - a[1]);
-          patterns[key] = Object.fromEntries(entries.slice(0, config.MAX_TOTAL));
-        }
+      const cache = wordsCacheMap[group];
+      if (cache?.words?.length > config.MAX_WORDS) {
+        cache.words = cache.words.slice(0, config.MAX_WORDS);
       }
     }
+    
     for (const group in wordsCacheMap) {
       if (!trieMap[group]) rebuildTrieForGroup(group);
     }
     flushStorageSync();
   }
 
-  if ('requestIdleCallback' in window) {
-    setInterval(() => {
-      requestIdleCallback(() => idleCleanup());
-    }, DEFAULT_CONFIG.IDLE_CLEANUP_DELAY);
-  } else {
-    setInterval(idleCleanup, DEFAULT_CONFIG.IDLE_CLEANUP_DELAY * 2);
-  }
+  const cleanupInterval = 'requestIdleCallback' in window 
+    ? setInterval(() => requestIdleCallback(idleCleanup), DEFAULT_CONFIG.IDLE_CLEANUP_DELAY)
+    : setInterval(idleCleanup, DEFAULT_CONFIG.IDLE_CLEANUP_DELAY * 2);
 
   // Public API
   const GhostComplete = {
-    // Initialize autocomplete on a specific element
-    init: function(element: HTMLElement | string, group = "default") {
+    init(element: HTMLElement | string, group = "default") {
       const el = typeof element === 'string' ? document.querySelector(element) as HTMLElement : element;
       if (!el) return false;
       
-      // Set the data attribute for autocomplete
       el.setAttribute('data-autocomplete', group);
       
-      // Initialize the element if it's not already initialized
       if (!elementStates.has(el)) {
-        // Trigger focus to initialize
         const currentFocus = document.activeElement;
         el.focus();
         if (currentFocus && currentFocus !== el) {
@@ -1333,80 +990,67 @@
       return true;
     },
     
-    // Initialize autocomplete on all input/textarea elements
-    initAll: function(group = "default") {
-      const inputs = document.querySelectorAll('input[type="text"], input[type="search"], input[type="email"], input[type="url"], input:not([type]), textarea');
+    initAll(group = "default") {
+      const inputs = document.querySelectorAll('input[type="text"],input[type="search"],input[type="email"],input[type="url"],input:not([type]),textarea');
       let count = 0;
       
       inputs.forEach(input => {
-        if (this.init(input as HTMLElement, group)) {
-          count++;
-        }
+        if (this.init(input as HTMLElement, group)) count++;
       });
       
       return count;
     },
     
-    setGroupConfig: function(group = "", params: Partial<AutocompleteConfig> = {}, classes: any = {}) {
+    setGroupConfig(group = "", params: Partial<AutocompleteConfig> = {}, classes: any = {}) {
       updateGroupConfig(group, params, classes);
     },
-    getGroupConfig: function(group = "") {
-      return getGroupConfig(group);
+    
+    getGroupConfig(group = "") {
+      return { ...getGroupConfig(group) };
     },
-    clearWords: function (group = "") {
+    
+    clearWords(group = "") {
       const { wordsKey } = getStorageKeys(group);
+      const cacheKey = group || "default";
       localStorage.removeItem(wordsKey);
-      wordsCacheMap[group] = [];
-      trieMap[group] = new Trie();
+      wordsCacheMap[cacheKey] = { words: [], entries: {} };
+      trieMap[cacheKey] = new Trie();
     },
-    clearPatterns: function (group = "") {
-      const { patternsKey } = getStorageKeys(group);
-      localStorage.removeItem(patternsKey);
-      patternsCacheMap[group] = {};
-    },
-    clearAll: function (group = "") {
+    
+    clearAll(group = "") {
       this.clearWords(group);
-      this.clearPatterns(group);
     },
-    listWords: function (group = "") {
-      return loadWords(group);
+    
+    listWords(group = "") {
+      return [...loadWords(group)];
     },
-    listPatterns: function (group = "") {
-      return loadPatterns(group);
-    },
-    getStats: function (group = "") {
-      const patterns = loadPatterns(group);
+    
+    getStats(group = "") {
       const words = loadWords(group);
+      const cacheKey = group || "default";
+      const entries = wordsCacheMap[cacheKey]?.entries || {};
       return {
         totalWords: words.length,
-        totalPatterns: Object.keys(patterns).length,
-        totalAssociations: Object.values(patterns)
-          .reduce((sum, p) => sum + Object.keys(p).length, 0)
+        totalEntries: Object.keys(entries).length
       };
     },
     
-    // Version info
-    version: "2.0.0"
+    version: "2.1.0"
   };
 
-  // Expose the API globally
+  // Global exposure
   (window as any).GhostComplete = GhostComplete;
-  (window as any).__customAutocomplete = GhostComplete; // Keep backward compatibility
+  (window as any).__customAutocomplete = GhostComplete;
 
-  // Export for module systems
+  // Module exports
   try {
-    if (typeof (globalThis as any).module !== 'undefined' && (globalThis as any).module.exports) {
+    if (typeof (globalThis as any).module?.exports !== 'undefined') {
       (globalThis as any).module.exports = GhostComplete;
     }
-  } catch (e) {
-    // Ignore module export errors in browser environment
-  }
+  } catch {}
   
-  // Export for ES modules and AMD
-  if (typeof window !== 'undefined' && (window as any).define && (window as any).define.amd) {
-    (window as any).define('ghostcomplete', [], function() {
-      return GhostComplete;
-    });
+  if (typeof window !== 'undefined' && (window as any).define?.amd) {
+    (window as any).define('ghostcomplete', [], () => GhostComplete);
   }
 
 })();

@@ -29,6 +29,8 @@ return (
 
 ```jsx
 // ✅ GhostComplete works seamlessly with controlled components
+import 'ghostcomplete'; // Automatically initializes and exposes GhostComplete globally
+
 const [value, setValue] = useState('');
 return (
   <input 
@@ -56,38 +58,78 @@ return (
 npm install ghostcomplete
 ```
 
+After installation, simply import the library and it will automatically attach to all inputs with the `data-autocomplete` attribute:
+
+```javascript
+// Import the library (automatically initializes)
+import 'ghostcomplete';
+
+// Or if using CommonJS
+require('ghostcomplete');
+```
+
 Or include via CDN:
 
 ```html
-<script src="https://unpkg.com/ghostcomplete@latest/dist/ghostcomplete.min.js"></script>
+<script src="https://unpkg.com/ghostcomplete@latest/dist/index.umd.js"></script>
 ```
+
+The library automatically exposes a global `GhostComplete` object with all the API methods.
 
 ## 🎬 Quick Start
 
-### Basic Usage
+### ✅ Automatic Usage (Recommended)
 
 ```html
-<!-- Add the data-autocomplete attribute to any input -->
-<input type="text" data-autocomplete="default" placeholder="Start typing...">
+<!-- Just add data-autocomplete attribute - no manual init needed! -->
+<input type="text" data-autocomplete="search" placeholder="Start typing...">
 <textarea data-autocomplete="comments" placeholder="Write your comment..."></textarea>
 
 <script>
-// Initialize all autocomplete inputs
-GhostComplete.initAll();
+// Import the library (automatically detects and initializes inputs)
+import 'ghostcomplete';
+
+// That's it! Elements with data-autocomplete work automatically
+// Configure groups as needed:
+GhostComplete.setGroupConfig('search', {
+  MAX_SUGGESTIONS: 8,
+  DEBOUNCE_DELAY: 100
+});
 </script>
+```
+
+### ⚠️ Manual Initialization (When Needed)
+
+Manual `init()` calls are only required for:
+- **Dynamic elements** created after page load
+- **React components** (useEffect hooks)
+- **Elements without** `data-autocomplete` attribute
+
+```javascript
+// For dynamically created elements
+const newInput = document.createElement('input');
+GhostComplete.init(newInput, 'search');
+
+// For all elements at once
+GhostComplete.initAll('default');
+
+// For specific elements
+GhostComplete.init('#my-input', 'search');
 ```
 
 ### React Integration
 
 ```jsx
 import { useEffect, useRef, useState } from 'react';
+// Import GhostComplete (this automatically sets up event listeners)
+import 'ghostcomplete';
 
 function SmartInput({ group = "default", ...props }) {
   const inputRef = useRef(null);
   const [value, setValue] = useState('');
 
   useEffect(() => {
-    // Initialize GhostComplete for this input
+    // Manual init required for React components
     if (inputRef.current) {
       GhostComplete.init(inputRef.current, group);
     }
@@ -103,6 +145,9 @@ function SmartInput({ group = "default", ...props }) {
     />
   );
 }
+
+// For static HTML elements, no init() needed:
+// <input data-autocomplete="search" placeholder="Search..." />
 
 // Usage
 function App() {
@@ -147,30 +192,94 @@ GhostComplete.setGroupConfig("comments", {
 });
 ```
 
-## 🧠 How Word Learning Works
+### 🔧 Complete Configuration Options
 
-GhostComplete uses a simple but effective approach:
-
-### Word Learning
-- Tracks frequently typed words
-- Builds a personal vocabulary per group
-- Prioritizes recent and common words
-- Provides instant prefix-based suggestions
+All configuration options are available through the `setGroupConfig` method:
 
 ```javascript
-// Example learning progression:
-// Day 1: User types "javascript"
-// System learns: ["javascript"]
+GhostComplete.setGroupConfig("myGroup", {
+  // Performance settings
+  MAX_WORDS: 300,              // Maximum words to store per group
+  MAX_SUGGESTIONS: 5,          // Maximum suggestions to show in popup
+  MAX_STABLE: 100,             // Stable words that won't be removed easily
+  
+  // Timing settings
+  DEBOUNCE_DELAY: 160,         // Delay before processing input (ms)
+  STORAGE_SYNC_DELAY: 600,     // Delay before saving to localStorage (ms)
+  IDLE_CLEANUP_DELAY: 2000     // Delay before cleaning up unused data (ms)
+}, {
+  // CSS class customization
+  popupContainer: "my-popup-container",     // Custom popup container class
+  popupRow: "my-suggestion-row",            // Custom suggestion row class
+  popupRowSelected: "my-selected-row",      // Custom selected row class
+  popupHint: "my-popup-hint"                // Custom hint text class
+});
+```
 
-// Day 2: User types "java" 
-// Suggestions: ["javascript"]
+### ⚙️ Configuration Examples
 
-// Day 3: User types "typescript", "python"
+```javascript
+// High-performance setup for search
+GhostComplete.setGroupConfig("search", {
+  MAX_SUGGESTIONS: 8,
+  DEBOUNCE_DELAY: 100,
+  MAX_WORDS: 500
+});
+
+// Memory-efficient setup for forms
+GhostComplete.setGroupConfig("forms", {
+  MAX_WORDS: 100,
+  MAX_SUGGESTIONS: 3
+});
+
+// Custom styling for chat inputs
+GhostComplete.setGroupConfig("chat", {
+  MAX_SUGGESTIONS: 6,
+  DEBOUNCE_DELAY: 80
+}, {
+  popupContainer: "chat-autocomplete",
+  popupRowSelected: "chat-suggestion-active",
+  popupHint: "chat-hint-text"
+});
+```
+
+## 🧠 How Word Learning Works
+
+GhostComplete uses a smart two-tier approach for optimal user experience:
+
+### Word Learning & Suggestions
+- **Suggestions**: Start from the first character typed (instant feedback)
+- **Word Storage**: Only saves words with 3+ characters (prevents noise from short words like "a", "is", "to")
+- Tracks frequently typed words with frequency scoring
+- Builds a personal vocabulary per group
+- Prioritizes recent and common words using time-weighted importance
+
+```javascript
+// Example learning and suggestion flow:
+
+// User types "j"
+// Suggestions: ["javascript"] (if previously learned)
+
+// User types "ja" 
+// Suggestions: ["javascript"] (refined match)
+
+// User completes "javascript" (3+ chars saved)
+// System learns: ["javascript"] with frequency: 1
+
+// User types "js" later
+// Suggestions: ["javascript"] (prefix matching from learned words)
+
+// User types "typescript", "python" (both 3+ chars saved)
 // System learns: ["javascript", "typescript", "python"]
 
-// Day 4: User starts typing "j..."
-// Suggestions: ["javascript"] (based on prefix matching)
+// User types "j" again
+// Suggestions: ["javascript"] (based on frequency & recency)
 ```
+
+### Smart Character Handling
+- **Immediate suggestions**: Any length input triggers autocomplete
+- **Quality storage**: Only meaningful words (3+ characters) are permanently saved
+- **Best of both worlds**: Responsive UI with clean, useful word database
 
 ## 👥 Group Management
 
@@ -274,7 +383,7 @@ Get statistics about learned data.
 
 ```javascript
 const stats = GhostComplete.getStats("search");
-console.log(stats); // {words: 145, suggestions: 12}
+console.log(stats); // {totalWords: 145, totalEntries: 145}
 ```
 
 ### Configuration Options
@@ -282,9 +391,20 @@ console.log(stats); // {words: 145, suggestions: 12}
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `MAX_WORDS` | number | 300 | Maximum words to store per group |
-| `MAX_SUGGESTIONS` | number | 5 | Maximum suggestions to show |
+| `MAX_SUGGESTIONS` | number | 5 | Maximum suggestions to show in popup |
+| `MAX_STABLE` | number | 100 | Stable words that won't be removed easily |
 | `DEBOUNCE_DELAY` | number | 160 | Debounce delay in milliseconds |
-| `STORAGE_SYNC_DELAY` | number | 600 | LocalStorage sync delay |
+| `STORAGE_SYNC_DELAY` | number | 600 | LocalStorage sync delay in milliseconds |
+| `IDLE_CLEANUP_DELAY` | number | 2000 | Delay before cleaning up unused data |
+
+### CSS Class Configuration
+
+| Class Property | Type | Description |
+|---------------|------|-------------|
+| `popupContainer` | string | Custom CSS class for popup container |
+| `popupRow` | string | Custom CSS class for suggestion rows |
+| `popupRowSelected` | string | Custom CSS class for selected suggestion row |
+| `popupHint` | string | Custom CSS class for hint text |
 
 ## ⚛️ React Hook Example
 
@@ -292,6 +412,8 @@ Create a reusable hook for easy integration:
 
 ```jsx
 import { useEffect, useRef } from 'react';
+// Import GhostComplete (auto-initializes)
+import 'ghostcomplete';
 
 function useGhostComplete(group = 'default', config = {}) {
   const ref = useRef(null);
@@ -307,9 +429,9 @@ function useGhostComplete(group = 'default', config = {}) {
       GhostComplete.init(ref.current, group);
     }
 
-    // Cleanup
+    // Cleanup is handled automatically by the library
     return () => {
-      // GhostComplete handles cleanup automatically
+      // No manual cleanup needed
     };
   }, [group, config]);
 
